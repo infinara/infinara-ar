@@ -1,0 +1,8 @@
+{
+  "mindFile": "targets/targets.mind",
+  "photoAspect": 0.698,
+  "float": { "width": 0.87, "lift": 0.07, "bob": 0.012, "shadow": true },
+  "targets": [
+    { "video": "videos/01.mp4", "videoAspect": 0.8 }
+  ]
+}

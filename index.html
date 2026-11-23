@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Infinara</title>
+<script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; }
+  #start {
+    position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; background: #0b0b0b; color: #eee; text-align: center; padding: 24px;
+  }
+  #start h1 { font-weight: 300; letter-spacing: .3em; font-size: 22px; margin: 0 0 12px; text-transform: uppercase; }
+  #start p { font-size: 14px; color: #aaa; max-width: 280px; line-height: 1.5; margin: 0 0 28px; }
+  button {
+    background: none; border: 1px solid #eee; color: #eee; padding: 12px 28px; font-size: 14px;
+    letter-spacing: .15em; text-transform: uppercase; border-radius: 0; cursor: pointer;
+  }
+  #hint {
+    position: fixed; left: 0; right: 0; bottom: 28px; z-index: 5; text-align: center; color: #fff;
+    font-size: 13px; letter-spacing: .1em; opacity: .85; pointer-events: none; display: none; text-shadow: 0 0 6px #000;
+  }
+  #sound {
+    position: fixed; top: 16px; right: 16px; z-index: 6; display: none; padding: 8px 14px; font-size: 12px;
+    background: rgba(0,0,0,.4);
+  }
+  #error { color: #e88; font-size: 13px; margin-top: 18px; max-width: 280px; }
+  .mindar-ui-overlay { display: none !important; }
+</style>
+</head>
+<body>
+<div id="start">
+  <h1>Infinara</h1>
+  <p>Allow camera access, then point your phone at the photo.</p>
+  <button id="go">Start</button>
+  <div id="error"></div>
+</div>
+<div id="hint">Point at the photo</div>
+<button id="sound">Sound off</button>
+<div id="scene-holder"></div>
+
+<script>
+(async function () {
+  const startEl = document.getElementById('start');
+  const errEl = document.getElementById('error');
+  const hint = document.getElementById('hint');
+  const soundBtn = document.getElementById('sound');
+  const holder = document.getElementById('scene-holder');
+
+  const config = await (await fetch('config.json', { cache: 'no-cache' })).json();
+
+  // Floating look. All sizes are relative to the photo width (= 1).
+  const fl = Object.assign({ width: 0.87, lift: 0.07, bob: 0.012, shadow: true }, config.float || {});
+  const photoAspect = config.photoAspect || 0.698; // photo height / width
+
+  // Soft drop shadow texture (drawn once, no image file needed)
+  function shadowTexture() {
+    const c = document.createElement('canvas'); c.width = c.height = 256;
+    const x = c.getContext('2d');
+    x.shadowColor = 'rgba(0,0,0,0.9)'; x.shadowBlur = 28; x.shadowOffsetX = 1000;
+    x.fillStyle = '#000';
+    x.fillRect(40 - 1000, 40, 176, 176);
+    return c.toDataURL('image/png');
+  }
+  const shadowSrc = fl.shadow ? shadowTexture() : '';
+
+  // One shared <video>: only the video for the scanned card is downloaded.
+  const vid = document.createElement('video');
+  vid.setAttribute('playsinline', ''); vid.setAttribute('webkit-playsinline', '');
+  vid.setAttribute('crossorigin', 'anonymous');
+  vid.loop = true; vid.muted = true; vid.preload = 'metadata';
+  vid.style.display = 'none';
+  document.body.appendChild(vid);
+
+  let entities = '';
+  config.targets.forEach((t, i) => {
+    const w = fl.width, h = fl.width * t.videoAspect;
+    const sw = w * 1.22, sh = h * 1.22;
+    entities += `
+      <a-entity mindar-image-target="targetIndex: ${i}" id="t${i}">
+        ${fl.shadow ? `<a-plane id="sh${i}" position="0.012 -0.022 0.004" width="${sw}" height="${sh}"></a-plane>` : ''}
+        <a-entity position="0 0 ${fl.lift}"
+          animation="property: position; to: 0 0 ${fl.lift + fl.bob}; dir: alternate; dur: 2800; easing: easeInOutSine; loop: true">
+          <a-plane id="v${i}" width="${w}" height="${h}" visible="false" material="shader: flat; color: #ffffff"></a-plane>
+        </a-entity>
+      </a-entity>`;
+  });
+
+  holder.innerHTML = `
+    <a-scene mindar-image="imageTargetSrc: ${config.mindFile}; autoStart: false; uiLoading: no; uiScanning: no; uiError: no; maxTrack: 1;"
+             color-space="sRGB" renderer="colorManagement: true, physicallyCorrectLights"
+             vr-mode-ui="enabled: false" device-orientation-permission-ui="enabled: false">
+      <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+      ${entities}
+    </a-scene>`;
+
+  const sceneEl = holder.querySelector('a-scene');
+  if (!sceneEl.hasLoaded) await new Promise(r => sceneEl.addEventListener('loaded', r, { once: true }));
+
+  // Shadow material (set as an object: a data URL breaks A-Frame's string parser)
+  if (fl.shadow) config.targets.forEach((t, i) => {
+    document.getElementById('sh' + i).setAttribute('material',
+      { shader: 'flat', src: shadowSrc, transparent: true, opacity: 0.55, depthWrite: false });
+  });
+
+  // Video texture shared by every video plane
+  const tex = new THREE.VideoTexture(vid);
+  tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = false;
+  if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+
+  const planes = config.targets.map((t, i) => document.getElementById('v' + i));
+  planes.forEach(p => {
+    const apply = () => {
+      const mesh = p.getObject3D('mesh');
+      if (!mesh) return;
+      mesh.material.map = tex; mesh.material.needsUpdate = true;
+    };
+    if (p.getObject3D('mesh')) apply();
+    else p.addEventListener('object3dset', e => { if (e.detail.type === 'mesh') apply(); });
+  });
+
+  let soundOn = false, current = -1;
+  function applySound() { vid.muted = !soundOn; soundBtn.textContent = soundOn ? 'Sound on' : 'Sound off'; }
+
+  function showCurrent(on) {
+    planes.forEach((p, i) => p.setAttribute('visible', on && i === current));
+  }
+  vid.addEventListener('playing', () => { hint.style.display = 'none'; showCurrent(true); });
+
+  document.getElementById('go').addEventListener('click', async () => {
+    errEl.textContent = '';
+    try {
+      // Unlock video playback inside the tap (needed on iOS Safari)
+      vid.muted = true;
+      vid.src = config.targets[0].video; current = 0;
+      try { await vid.play(); vid.pause(); vid.currentTime = 0; } catch (e) {}
+      await sceneEl.systems['mindar-image-system'].start();
+      startEl.style.display = 'none';
+      hint.style.display = 'block';
+      soundBtn.style.display = 'block';
+    } catch (e) {
+      errEl.textContent = 'Could not open the camera. Check browser permissions and try again.';
+      console.error(e);
+    }
+  });
+
+  soundBtn.addEventListener('click', () => { soundOn = !soundOn; applySound(); });
+
+  config.targets.forEach((t, i) => {
+    const el = document.getElementById('t' + i);
+    el.addEventListener('targetFound', () => {
+      if (current !== i) {
+        showCurrent(false);
+        current = i;
+        vid.src = t.video;
+        vid.currentTime = 0;
+      }
+      hint.textContent = 'Loading…'; hint.style.display = 'block';
+      applySound();
+      vid.play().catch(() => { soundOn = false; applySound(); vid.play().catch(() => {}); });
+    });
+    el.addEventListener('targetLost', () => {
+      vid.pause();
+      hint.textContent = 'Point at the photo'; hint.style.display = 'block';
+    });
+  });
+})();
+</script>
+</body>
+</html>
