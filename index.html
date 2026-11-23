@@ -56,7 +56,35 @@
   const fl = Object.assign({ width: 0.87, lift: 0.04, bob: 0.008, shadow: true }, config.float || {});
   const photoAspect = config.photoAspect || 0.698; // photo height / width
   // Tracking smoothness. Lower filterMinCF / filterBeta = steadier but slower to follow.
-  const tr = Object.assign({ filterMinCF: 0.0001, filterBeta: 10, warmupTolerance: 5, missTolerance: 10 }, config.tracking || {});
+  const tr = Object.assign({ filterMinCF: 0.001, filterBeta: 100, warmupTolerance: 5, missTolerance: 10 }, config.tracking || {});
+
+  // Extra smoothing on top of MindAR: holds still through small jitter, follows quickly when the phone really moves.
+  const sm = Object.assign({ noise: 0.015, tauRest: 0.4, tauMove: 0.05 }, config.smooth || {});
+  AFRAME.registerComponent('smooth-follow', {
+    schema: { targetId: { type: 'string' }, noise: { default: 0.015 }, tauRest: { default: 0.4 }, tauMove: { default: 0.05 } },
+    init() {
+      this.p = new THREE.Vector3(); this.q = new THREE.Quaternion(); this.s = new THREE.Vector3();
+      this.ps = new THREE.Vector3(); this.qs = new THREE.Quaternion(); this.have = false; this.tg = null;
+    },
+    tick(t, dtms) {
+      if (!this.tg) this.tg = document.getElementById(this.data.targetId);
+      if (!this.tg) return;
+      const src = this.tg.object3D, me = this.el.object3D, d = this.data;
+      if (!src.visible) { me.visible = false; this.have = false; return; }
+      src.matrix.decompose(this.p, this.q, this.s);
+      const dt = Math.min((dtms || 16) / 1000, 0.1);
+      if (!this.have) { this.ps.copy(this.p); this.qs.copy(this.q); this.have = true; }
+      else {
+        const dev = this.ps.distanceTo(this.p) + 0.5 * this.qs.angleTo(this.q);
+        const tau = d.tauMove + (d.tauRest - d.tauMove) * Math.exp(-Math.pow(dev / d.noise, 2));
+        const a = 1 - Math.exp(-dt / tau);
+        if (!isFinite(a)) { this.have = false; return; }
+        this.ps.lerp(this.p, a); this.qs.slerp(this.q, a);
+      }
+      if (!isFinite(this.ps.x + this.ps.y + this.ps.z)) { this.have = false; return; }
+      me.position.copy(this.ps); me.quaternion.copy(this.qs); me.scale.copy(this.s); me.visible = true;
+    }
+  });
 
   // Soft drop shadow texture (drawn once, no image file needed)
   function shadowTexture() {
@@ -82,7 +110,8 @@
     const w = fl.width, h = fl.width * t.videoAspect;
     const sw = w * 1.22, sh = h * 1.22;
     entities += `
-      <a-entity mindar-image-target="targetIndex: ${i}" id="t${i}">
+      <a-entity mindar-image-target="targetIndex: ${i}" id="t${i}"></a-entity>
+      <a-entity id="s${i}" visible="true" smooth-follow="targetId: t${i}; noise: ${sm.noise}; tauRest: ${sm.tauRest}; tauMove: ${sm.tauMove}">
         ${fl.shadow ? `<a-plane id="sh${i}" position="0.012 -0.022 0.004" width="${sw}" height="${sh}"></a-plane>` : ''}
         <a-entity position="0 0 ${fl.lift}"
           animation="property: position; to: 0 0 ${fl.lift + fl.bob}; dir: alternate; dur: 2800; easing: easeInOutSine; loop: true">
