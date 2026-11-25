@@ -153,26 +153,52 @@
     else p.addEventListener('object3dset', e => { if (e.detail.type === 'mesh') apply(); });
   });
 
+  // Camera: MindAR asks for the default camera at low resolution (blurry, and iPhone Pro may pick the ultra-wide / macro lens).
+  // Ask for 1280x720 and, where the phone names its lenses, the plain main back camera.
+  const mdev = navigator.mediaDevices, origGUM = mdev.getUserMedia.bind(mdev);
+  let backId = null;
+  mdev.getUserMedia = async (c) => {
+    if (c && c.video && typeof c.video === 'object' && c.video.facingMode) {
+      const v = Object.assign({}, c.video, { width: { ideal: 1280 }, height: { ideal: 720 }, advanced: [{ focusMode: 'continuous' }] });
+      if (backId) { v.deviceId = { exact: backId }; delete v.facingMode; }
+      try { return await origGUM(Object.assign({}, c, { video: v })); } catch (e) { console.warn('camera constraints rejected, using defaults', e); }
+    }
+    return origGUM(c);
+  };
+  async function pickBackCamera() {
+    try {
+      const tmp = await origGUM({ video: { facingMode: 'environment' } });   // permission prompt; labels appear after this
+      tmp.getTracks().forEach(t => t.stop());
+      const cams = (await mdev.enumerateDevices()).filter(d => d.kind === 'videoinput');
+      const main = cams.find(d => /^back camera$/i.test(d.label)) ||
+                   cams.find(d => /back/i.test(d.label) && !/ultra|wide|tele|dual|triple|macro/i.test(d.label));
+      return main ? main.deviceId : null;
+    } catch (e) { return null; }
+  }
+
   let soundOn = false, current = -1;
   function applySound() { vid.muted = !soundOn; soundBtn.textContent = soundOn ? 'Sound on' : 'Sound off'; }
 
   function showCurrent(on) {
     planes.forEach((p, i) => p.setAttribute('visible', on && i === current));
   }
-  vid.addEventListener('playing', () => { hint.style.display = 'none'; showCurrent(true); });
+  vid.addEventListener('playing', () => { if (current < 0) return; hint.style.display = 'none'; showCurrent(true); });
 
-  document.getElementById('go').addEventListener('click', async () => {
+  const goBtn = document.getElementById('go'), startMsg = document.querySelector('#start p');
+  goBtn.addEventListener('click', async () => {
     errEl.textContent = '';
+    goBtn.disabled = true; goBtn.textContent = 'Loading…'; startMsg.textContent = 'Starting the camera. This can take a few seconds the first time.';
     try {
-      // Unlock video playback inside the tap (needed on iOS Safari)
-      vid.muted = true;
-      vid.src = config.targets[0].video; current = 0;
-      try { await vid.play(); vid.pause(); vid.currentTime = 0; } catch (e) {}
+      // Unlock video playback inside the tap (iOS). Uses a tiny 1 KB clip, so nothing big is downloaded yet.
+      vid.muted = true; vid.src = 'videos/unlock.mp4'; current = -1;
+      try { await vid.play(); vid.pause(); } catch (e) {}
+      backId = await pickBackCamera();
       await sceneEl.systems['mindar-image-system'].start();
       startEl.style.display = 'none';
       hint.style.display = 'block';
       soundBtn.style.display = 'block';
     } catch (e) {
+      goBtn.disabled = false; goBtn.textContent = 'Start'; startMsg.textContent = 'Allow camera access, then point your phone at the photo.';
       errEl.textContent = 'Could not open the camera. Check browser permissions and try again.';
       console.error(e);
     }
