@@ -1,10 +1,35 @@
 {
   "mindFile": "targets/targets.mind",
   "photoAspect": 0.698,
-  "float": { "width": 0.87, "lift": 0.05, "bob": 0.008, "shadow": true },
-  "tracking": { "filterMinCF": 0.001, "filterBeta": 100, "warmupTolerance": 5, "missTolerance": 10 },
-  "smooth": { "noise": 0.015, "tauRest": 0.4, "tauMove": 0.05 },
+  "float": {
+    "width": 0.87,
+    "lift": 0.05,
+    "bob": 0.008,
+    "shadow": true
+  },
+  "tracking": {
+    "filterMinCF": 0.001,
+    "filterBeta": 100,
+    "warmupTolerance": 5,
+    "missTolerance": 10
+  },
+  "smooth": {
+    "noise": 0.015,
+    "tauRest": 0.4,
+    "tauMove": 0.05
+  },
   "targets": [
-    { "video": "videos/01.mp4", "videoAspect": 0.8 }
+    {
+      "video": "videos/01.mp4",
+      "videoAspect": 0.8
+    },
+    {
+      "video": "videos/11.mp4",
+      "videoAspect": 0.8
+    },
+    {
+      "video": "videos/15.mp4",
+      "videoAspect": 0.8
+    }
   ]
 }
